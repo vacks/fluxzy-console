@@ -1,0 +1,321 @@
+From fd0b561d763d220d3c0f055211c0d87ba4bc583d Mon Sep 17 00:00:00 2001
+From: fluxzy-console fork <fork@fluxzy-console.local>
+Date: Sun, 1 Nov 2026 17:34:07 +0800
+Subject: [PATCH] feat(core): add declarative console body transform actions
+
+---
+ .../Actions/ConsoleBodyTransformAction.cs     | 302 ++++++++++++++++++
+ 1 file changed, 302 insertions(+)
+ create mode 100644 src/Fluxzy.Core/Rules/Actions/ConsoleBodyTransformAction.cs
+
+diff --git a/src/Fluxzy.Core/Rules/Actions/ConsoleBodyTransformAction.cs b/src/Fluxzy.Core/Rules/Actions/ConsoleBodyTransformAction.cs
+new file mode 100644
+index 00000000..4aecfb45
+--- /dev/null
++++ b/src/Fluxzy.Core/Rules/Actions/ConsoleBodyTransformAction.cs
+@@ -0,0 +1,302 @@
++// Copyright 2021 - Haga Rakotoharivelo - https://github.com/haga-rak
++// Console fork addition: declarative request/response body transformation.
++
++using System;
++using System.IO;
++using System.Text;
++using System.Text.RegularExpressions;
++using System.Threading;
++using System.Threading.Tasks;
++using Fluxzy.Core;
++using Fluxzy.Core.Breakpoints;
++
++namespace Fluxzy.Rules.Actions
++{
++    public abstract class ConsoleBodyTransformActionBase : Action
++    {
++        [ActionDistinctive]
++        public string Operation { get; set; } = "Replace";
++
++        [ActionDistinctive]
++        public string Pattern { get; set; } = string.Empty;
++
++        [ActionDistinctive]
++        public string Replacement { get; set; } = string.Empty;
++
++        [ActionDistinctive]
++        public string? Content { get; set; }
++
++        [ActionDistinctive]
++        public string? ContentBase64 { get; set; }
++
++        [ActionDistinctive]
++        public string? FileName { get; set; }
++
++        [ActionDistinctive]
++        public string? ContentType { get; set; }
++
++        [ActionDistinctive]
++        public string EncodingName { get; set; } = "utf-8";
++
++        [ActionDistinctive]
++        public bool CaseSensitive { get; set; } = true;
++
++        public int MaxBodyBytes { get; set; } = 8 * 1024 * 1024;
++
++        private byte[]? _setBody;
++        private Encoding _encoding = Encoding.UTF8;
++        private Regex? _regex;
++
++        protected abstract bool IsRequest { get; }
++
++        public override void Init(StartupContext startupContext)
++        {
++            base.Init(startupContext);
++
++            _encoding = Encoding.GetEncoding(string.IsNullOrWhiteSpace(EncodingName) ? "utf-8" : EncodingName);
++
++            if (MaxBodyBytes < 1024) {
++                MaxBodyBytes = 1024;
++            } else if (MaxBodyBytes > 64 * 1024 * 1024) {
++                MaxBodyBytes = 64 * 1024 * 1024;
++            }
++
++            var operation = (Operation ?? string.Empty).Trim().ToLowerInvariant();
++
++            if (operation == "set") {
++                if (!string.IsNullOrWhiteSpace(FileName)) {
++                    _setBody = File.ReadAllBytes(FileName!);
++                } else if (!string.IsNullOrWhiteSpace(ContentBase64)) {
++                    _setBody = Convert.FromBase64String(ContentBase64!);
++                } else {
++                    _setBody = _encoding.GetBytes(Content ?? string.Empty);
++                }
++
++                return;
++            }
++
++            if (operation != "replace" && operation != "regexreplace") {
++                throw new ArgumentException("Console body transform operation must be Set, Replace or RegexReplace");
++            }
++
++            if (string.IsNullOrEmpty(Pattern)) {
++                throw new ArgumentException("Console body transform requires a non-empty pattern");
++            }
++
++            var regexPattern = operation == "replace" ? Regex.Escape(Pattern) : Pattern;
++            var options = RegexOptions.CultureInvariant | RegexOptions.Singleline;
++
++            if (!CaseSensitive) {
++                options |= RegexOptions.IgnoreCase;
++            }
++
++            try {
++                _regex = new Regex(regexPattern, options, TimeSpan.FromMilliseconds(500));
++            }
++            catch (ArgumentException ex) {
++                throw new ArgumentException("Invalid console body transform regex: " + ex.Message, ex);
++            }
++
++            // A literal replacement must not interpret $1 style substitutions.
++            if (operation == "replace") {
++                Replacement = (Replacement ?? string.Empty).Replace("$", "$$");
++            }
++        }
++
++        public override ValueTask InternalAlter(
++            ExchangeContext context, Exchange? exchange, Connection? connection, FilterScope scope,
++            BreakPointManager breakPointManager)
++        {
++            if (exchange == null) {
++                return default;
++            }
++
++            var contentType = ContentType;
++
++            if (!string.IsNullOrWhiteSpace(contentType)) {
++                if (IsRequest) {
++                    exchange.Request.Header.AltReplaceHeaders("content-type", contentType!, true);
++                } else if (connection != null) {
++                    exchange.Response.Header.AltReplaceHeaders("content-type", contentType!, true);
++                }
++            }
++
++            if (IsRequest) {
++                context.RegisterRequestBodySubstitution(new ConsoleBodySubstitution(this, exchange, _encoding,
++                    Operation, _setBody, _regex, Replacement, MaxBodyBytes));
++            } else if (connection != null) {
++                context.RegisterResponseBodySubstitution(new ConsoleBodySubstitution(this, exchange, _encoding,
++                    Operation, _setBody, _regex, Replacement, MaxBodyBytes));
++            }
++
++            return default;
++        }
++    }
++
++    [ActionMetadata("Replace a request body using Set, Replace or RegexReplace.")]
++    public class ConsoleTransformRequestBodyAction : ConsoleBodyTransformActionBase
++    {
++        protected override bool IsRequest => true;
++
++        public override FilterScope ActionScope => FilterScope.RequestHeaderReceivedFromClient;
++
++        public override string DefaultDescription => "Console request body transform";
++    }
++
++    [ActionMetadata("Replace a response body using Set, Replace or RegexReplace.")]
++    public class ConsoleTransformResponseBodyAction : ConsoleBodyTransformActionBase
++    {
++        protected override bool IsRequest => false;
++
++        public override FilterScope ActionScope => FilterScope.ResponseHeaderReceivedFromRemote;
++
++        public override string DefaultDescription => "Console response body transform";
++    }
++
++    internal sealed class ConsoleBodySubstitution : IStreamSubstitution
++    {
++        private readonly Action _source;
++        private readonly Exchange _exchange;
++        private readonly Encoding _encoding;
++        private readonly string _operation;
++        private readonly byte[]? _setBody;
++        private readonly Regex? _regex;
++        private readonly string _replacement;
++        private readonly int _maxBodyBytes;
++
++        public ConsoleBodySubstitution(Action source, Exchange exchange, Encoding encoding, string operation,
++            byte[]? setBody, Regex? regex, string replacement, int maxBodyBytes)
++        {
++            _source = source;
++            _exchange = exchange;
++            _encoding = encoding;
++            _operation = (operation ?? string.Empty).Trim().ToLowerInvariant();
++            _setBody = setBody;
++            _regex = regex;
++            _replacement = replacement ?? string.Empty;
++            _maxBodyBytes = maxBodyBytes;
++        }
++
++        public async ValueTask<Stream> Substitute(Stream originalStream)
++        {
++            if (_operation == "set") {
++                await originalStream.CopyToAsync(Stream.Null).ConfigureAwait(false);
++                return new MemoryStream(_setBody ?? Array.Empty<byte>(), writable: false);
++            }
++
++            var prefix = await ReadPrefixAsync(originalStream, _maxBodyBytes, CancellationToken.None)
++                .ConfigureAwait(false);
++
++            if (prefix.Length > _maxBodyBytes) {
++                // Preserve a body that is too large to transform without buffering it.
++                return new PrefixThenStream(prefix, originalStream);
++            }
++
++            var text = _encoding.GetString(prefix);
++
++            try {
++                var transformed = _regex!.Replace(text, _replacement);
++                return new MemoryStream(_encoding.GetBytes(transformed), writable: false);
++            }
++            catch (RegexMatchTimeoutException) {
++                Console.Error.WriteLine($"console body transform timed out on exchange {_exchange.Id}");
++                return new MemoryStream(prefix, writable: false);
++            }
++            catch (Exception ex) {
++                throw new RuleExecutionFailureException(
++                    $"Console body transform failed: {ex.Message}", _source, ex);
++            }
++        }
++
++        private static async Task<byte[]> ReadPrefixAsync(Stream stream, int maxBytes, CancellationToken token)
++        {
++            var buffer = new byte[Math.Min(64 * 1024, maxBytes + 1)];
++            using var memory = new MemoryStream(Math.Min(maxBytes + 1, 64 * 1024));
++
++            while (memory.Length <= maxBytes) {
++                var remaining = maxBytes + 1 - (int)memory.Length;
++                var read = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), token)
++                    .ConfigureAwait(false);
++                if (read == 0) {
++                    break;
++                }
++                memory.Write(buffer, 0, read);
++            }
++
++            return memory.ToArray();
++        }
++    }
++
++    internal sealed class PrefixThenStream : Stream
++    {
++        private readonly byte[] _prefix;
++        private readonly Stream _tail;
++        private int _offset;
++        private bool _disposed;
++
++        public PrefixThenStream(byte[] prefix, Stream tail)
++        {
++            _prefix = prefix;
++            _tail = tail;
++        }
++
++        public override bool CanRead => true;
++        public override bool CanSeek => false;
++        public override bool CanWrite => false;
++        public override long Length => throw new NotSupportedException();
++        public override long Position {
++            get => throw new NotSupportedException();
++            set => throw new NotSupportedException();
++        }
++
++        public override int Read(byte[] buffer, int offset, int count)
++        {
++            if (_offset < _prefix.Length) {
++                var n = Math.Min(count, _prefix.Length - _offset);
++                Buffer.BlockCopy(_prefix, _offset, buffer, offset, n);
++                _offset += n;
++                return n;
++            }
++
++            return _tail.Read(buffer, offset, count);
++        }
++
++        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
++        {
++            if (_offset < _prefix.Length) {
++                var n = Math.Min(buffer.Length, _prefix.Length - _offset);
++                _prefix.AsMemory(_offset, n).CopyTo(buffer);
++                _offset += n;
++                return n;
++            }
++
++            return await _tail.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
++        }
++
++        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
++            => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
++
++        public override void Flush() { }
++        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
++        public override void SetLength(long value) => throw new NotSupportedException();
++        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
++
++        protected override void Dispose(bool disposing)
++        {
++            if (!_disposed && disposing) {
++                _tail.Dispose();
++            }
++            _disposed = true;
++            base.Dispose(disposing);
++        }
++
++        public override async ValueTask DisposeAsync()
++        {
++            if (!_disposed) {
++                await _tail.DisposeAsync().ConfigureAwait(false);
++                _disposed = true;
++            }
++            await base.DisposeAsync().ConfigureAwait(false);
++        }
++    }
++}
+-- 
+2.54.0 (Apple Git-157)
+

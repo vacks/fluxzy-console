@@ -1,0 +1,11 @@
+rules:
+  - name: 默认规则（不影响流量）
+    filter:
+      typeKind: AnyFilter
+    actions:
+      - typeKind: NoOpAction
+  - name: 新规则
+    filter:
+      typeKind: AnyFilter
+    actions:
+      - typeKind: NoOpAction

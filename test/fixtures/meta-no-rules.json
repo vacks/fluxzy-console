@@ -1,0 +1,84 @@
+{
+  "captureDate": "2026-10-31T17:33:43.554231+08:00",
+  "tags": [],
+  "viewFilters": [],
+  "archiveVersion": "0.3.0",
+  "environmentInformation": {
+    "operationSystem": "macOS 27.0.1",
+    "runtimeIdentifier": "osx-arm64",
+    "machineName": "MacBookVACKS"
+  },
+  "fluxzyVersion": "1.39.0.0",
+  "capturedSetting": {
+    "internalAlterationRules": [],
+    "boundPoints": [
+      {
+        "endPoint": {
+          "address": "127.0.0.1",
+          "port": 44345
+        },
+        "default": true
+      }
+    ],
+    "boundPointsDescription": "[Fluxzy.FluxzyEndPoint]",
+    "verbose": false,
+    "connectionPerHost": 16,
+    "expectContinueTimeout": "00:00:01",
+    "connectionTimeout": "00:00:45",
+    "responseHeaderTimeout": "00:01:40",
+    "responseBodyIdleTimeout": "00:00:00",
+    "serverProtocols": "Tls, Tls11, Tls12, Tls13",
+    "caCertificate": {
+      "retrieveMode": "FluxzyDefault",
+      "serialNumber": null,
+      "thumbPrint": null
+    },
+    "autoInstallCertificate": false,
+    "checkCertificateRevocation": true,
+    "disableCertificateCache": false,
+    "captureRawPacket": false,
+    "captureInterfaceName": null,
+    "byPassHost": [],
+    "byPassHostFlat": "",
+    "archivingPolicy": {
+      "type": "None",
+      "directory": null
+    },
+    "alterationRules": [],
+    "saveFilter": null,
+    "globalSkipSslDecryption": false,
+    "outOfProcCapture": false,
+    "useBouncyCastle": false,
+    "maxExchangeCount": null,
+    "reverseMode": false,
+    "reverseModeForcedPort": null,
+    "reverseModePlainHttp": false,
+    "proxyAuthentication": null,
+    "skipRemoteCertificateValidation": false,
+    "serveH2": false,
+    "recoverHostNameFromSni": false,
+    "exportCertificateInSslInfo": false,
+    "enableProcessTracking": false,
+    "includeAndroidEmulatorHost": true,
+    "enableDiscoveryService": false,
+    "protoDirectories": [],
+    "logIncludeSensitiveHeaders": false,
+    "logRedactedHeaders": [
+      "Authorization",
+      "Proxy-Authorization",
+      "Cookie",
+      "Set-Cookie",
+      "X-Auth-Token"
+    ],
+    "skipInternalRules": false,
+    "disableAutomaticConnectionAuthPinning": false,
+    "maxPinnedConnectionsPerDownstream": 64
+  },
+  "resolvedEndPoints": [
+    {
+      "address": "127.0.0.1",
+      "port": 44345
+    }
+  ],
+  "properties": {}
+}

@@ -1,0 +1,18 @@
+.git
+.github
+.gitignore
+bin
+data
+console-data
+web/node_modules
+web/dist
+web/.vite
+*.log
+.DS_Store
+.env
+.env.*
+
+# fluxzy fork source/build cache
+fork/fluxzy/.work
+fork/fluxzy/.upstream
+fork/fluxzy/.check-*

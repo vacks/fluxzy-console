@@ -1,0 +1,182 @@
+From 1b54441bb9adaf3f9d79e1a84abba3869d7b5634 Mon Sep 17 00:00:00 2001
+From: fluxzy-console fork <fork@fluxzy-console.local>
+Date: Sun, 1 Nov 2026 17:34:07 +0800
+Subject: [PATCH] feat(cli): hot reload rule file into running proxy
+
+---
+ src/Fluxzy/Commands/RuleHotReloadWatcher.cs | 147 ++++++++++++++++++++
+ src/Fluxzy/Commands/StartCommandBuilder.cs  |   4 +
+ 2 files changed, 151 insertions(+)
+ create mode 100644 src/Fluxzy/Commands/RuleHotReloadWatcher.cs
+
+diff --git a/src/Fluxzy/Commands/RuleHotReloadWatcher.cs b/src/Fluxzy/Commands/RuleHotReloadWatcher.cs
+new file mode 100644
+index 00000000..9c5f260a
+--- /dev/null
++++ b/src/Fluxzy/Commands/RuleHotReloadWatcher.cs
+@@ -0,0 +1,147 @@
++// Copyright 2021 - Haga Rakotoharivelo - https://github.com/haga-rak
++// Console fork addition: reload a rule file into the running Proxy without restarting it.
++
++using System;
++using System.IO;
++using System.Linq;
++using System.Security.Cryptography;
++using System.Text;
++using System.Text.Json;
++using System.Threading;
++using System.Threading.Tasks;
++using Fluxzy;
++using Fluxzy.Rules;
++
++namespace Fluxzy.Cli.Commands
++{
++    internal static class RuleHotReloadWatcher
++    {
++        private const int PollIntervalMs = 500;
++
++        public static void Start(Proxy proxy, FileInfo ruleFile, CancellationToken token)
++        {
++            if (Environment.GetEnvironmentVariable("FLUXZY_CONSOLE_RULE_HOT_RELOAD") != "1") {
++                return;
++            }
++
++            var statusFile = Environment.GetEnvironmentVariable("FLUXZY_CONSOLE_RULE_STATUS_FILE");
++            if (string.IsNullOrWhiteSpace(statusFile)) {
++                statusFile = ruleFile.FullName + ".status.json";
++            }
++
++            _ = Task.Run(() => RunAsync(proxy, ruleFile, statusFile!, token), CancellationToken.None);
++        }
++
++        private static async Task RunAsync(Proxy proxy, FileInfo ruleFile, string statusFile,
++            CancellationToken token)
++        {
++            var lastHash = string.Empty;
++
++            try {
++                if (ruleFile.Exists) {
++                    var initial = await ReadAllTextWithRetryAsync(ruleFile.FullName, token).ConfigureAwait(false);
++                    WriteStatus(statusFile, true, Hash(initial), 0, null);
++                }
++            }
++            catch (OperationCanceledException) {
++                return;
++            }
++
++            while (!token.IsCancellationRequested) {
++                try {
++                    await Task.Delay(PollIntervalMs, token).ConfigureAwait(false);
++
++                    if (!ruleFile.Exists) {
++                        continue;
++                    }
++
++                    var content = await ReadAllTextWithRetryAsync(ruleFile.FullName, token).ConfigureAwait(false);
++                    var hash = Hash(content);
++
++                    if (hash == lastHash) {
++                        continue;
++                    }
++
++                    lastHash = hash;
++
++                    RuleSet? ruleSet;
++                    try {
++                        ruleSet = new RuleConfigParser().TryGetRuleSetFromYaml(content, out var errors);
++
++                        if (ruleSet == null && errors!.Any()) {
++                            throw new ArgumentException(string.Join("\r\n", errors!.Select(s => s.Message)));
++                        }
++                    }
++                    catch (Exception ex) {
++                        WriteStatus(statusFile, false, hash, 0, ex.Message);
++                        Console.Error.WriteLine($"rule-hot-reload failed: {ex.Message}");
++                        continue;
++                    }
++
++                    var rules = ruleSet?.Rules.SelectMany(s => s.GetAllRules()).ToList() ?? new();
++
++                    try {
++                        proxy.UpdateRules(rules);
++                        WriteStatus(statusFile, true, hash, rules.Count, null);
++                        Console.Out.WriteLine($"rule-hot-reload applied {rules.Count} rule(s)");
++                    }
++                    catch (Exception ex) {
++                        WriteStatus(statusFile, false, hash, 0, ex.Message);
++                        Console.Error.WriteLine($"rule-hot-reload apply failed: {ex.Message}");
++                    }
++                }
++                catch (OperationCanceledException) {
++                    return;
++                }
++                catch (Exception ex) {
++                    Console.Error.WriteLine($"rule-hot-reload watcher error: {ex.Message}");
++                }
++            }
++        }
++
++        private static async Task<string> ReadAllTextWithRetryAsync(string path, CancellationToken token)
++        {
++            Exception? last = null;
++
++            for (var attempt = 0; attempt < 5; attempt++) {
++                try {
++                    return await File.ReadAllTextAsync(path, token).ConfigureAwait(false);
++                }
++                catch (IOException ex) {
++                    last = ex;
++                    await Task.Delay(50, token).ConfigureAwait(false);
++                }
++            }
++
++            throw last ?? new IOException("cannot read rule file");
++        }
++
++        private static string Hash(string content)
++            => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
++
++        private static void WriteStatus(string path, bool success, string hash, int rules, string? error)
++        {
++            try {
++                var directory = Path.GetDirectoryName(path);
++                if (!string.IsNullOrEmpty(directory)) {
++                    Directory.CreateDirectory(directory);
++                }
++
++                var payload = JsonSerializer.Serialize(new {
++                    success,
++                    hash,
++                    appliedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
++                    rules,
++                    error
++                });
++
++                var temp = path + ".tmp";
++                File.WriteAllText(temp, payload);
++                File.Move(temp, path, true);
++            }
++            catch (Exception ex) {
++                Console.Error.WriteLine($"rule-hot-reload status write failed: {ex.Message}");
++            }
++        }
++    }
++}
+diff --git a/src/Fluxzy/Commands/StartCommandBuilder.cs b/src/Fluxzy/Commands/StartCommandBuilder.cs
+index 2a251b8f..54776c71 100644
+--- a/src/Fluxzy/Commands/StartCommandBuilder.cs
++++ b/src/Fluxzy/Commands/StartCommandBuilder.cs
+@@ -342,6 +342,10 @@ namespace Fluxzy.Cli.Commands
+                     invocationContext.BindingContext.Console
+                                      .WriteLine($"Listen on {string.Join(", ", endPoints.Select(s => s))}");
+ 
++                    if (ruleFile != null) {
++                        RuleHotReloadWatcher.Start(proxy, ruleFile, cancellationToken);
++                    }
++
+                     if (FluxzySharedSetting.BrotliAutoDisabled) {
+                         invocationContext.Console.Error.WriteLine(FluxzySharedSetting.BrotliAutoDisabledMessage);
+                     }
+-- 
+2.54.0 (Apple Git-157)
+

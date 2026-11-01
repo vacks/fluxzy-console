@@ -1,0 +1,19 @@
+name: fluxzy-console
+
+services:
+  fluxzy-console:
+    image: ghcr.io/vacks/fluxzy-console:1.0.0
+    platform: linux/amd64
+    restart: unless-stopped
+    stop_grace_period: 45s
+    ports:
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - ./config:/config
+      - fluxzy-data:/data
+      - console-data:/var/lib/fluxzy-console
+
+volumes:
+  fluxzy-data:
+  console-data:

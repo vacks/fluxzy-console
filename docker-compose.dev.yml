@@ -1,0 +1,20 @@
+services:
+  fluxzy-console:
+    image: fluxzy-console:1.0.0-dev
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      target: dev-arm64
+      platforms:
+        - linux/arm64
+      args:
+        CONSOLE_VERSION: 1.0.0
+        FLUXZY_CLI_RELEASE: 1.39.52.38106
+    ports: !override
+      - "443:443"
+      - "18080:8080"
+    volumes:
+      - ./dev/config:/config
+      - fluxzy-data:/data
+      - console-data:/var/lib/fluxzy-console

@@ -1,0 +1,42 @@
+# build output
+/bin/
+/dist/
+/console-data/
+/data/
+*.log
+
+# frontend
+web/node_modules/
+web/dist/
+web/.vite/
+web/coverage/
+
+# go
+*.test
+coverage.out
+coverage.html
+
+# ide / os
+.DS_Store
+.idea/
+.vscode/
+
+# env
+.env
+.env.*
+
+# fluxzy fork build workspace
+fork/fluxzy/.work/
+fork/fluxzy/out/
+fork/fluxzy/.upstream/
+fork/fluxzy/.check-*/
+
+# runtime rule state written into the bind-mounted config directory
+/config/rules.yaml.pending
+/config/rules.yaml.applied
+/config/rules.yaml.bak
+/config/.rules-status.json
+/dev/config/rules.yaml.pending
+/dev/config/rules.yaml.applied
+/dev/config/rules.yaml.bak
+/dev/config/.rules-status.json
