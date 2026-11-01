@@ -70,7 +70,7 @@ docker run --rm \
   -v "$NUGET_VOLUME":/root/.nuget/packages \
   -w /src \
   "$SDK_IMAGE" \
-  dotnet publish src/Fluxzy/Fluxzy.csproj \
+  dotnet publish src/Fluxzy/fluxzy.csproj \
     -c Release -r "$CHECK_RID" --self-contained true \
     -p:PublishSingleFile=true -p:DebugType=None \
     -o /out
